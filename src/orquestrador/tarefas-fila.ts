@@ -1,0 +1,156 @@
+// Tarefas `kind=function` conhecidas pela fila: responder (chat enfileirado),
+// agente-lead (junta consultas dos especialistas), consolidacao, indexar,
+// cron:* (daily, lembretes, backup) e aoTerminar (entrega do resultado).
+import { resolve } from 'node:path';
+
+import type { App } from '../app.js';
+import type { MensagemRecebida } from '../bus/bus.js';
+import type { Tarefa } from '../fila/worker.js';
+import type { Job } from '../fila/types.js';
+import { consolidar } from '../cerebro/consolidacao.js';
+import { indexarPendentes } from '../cerebro/contexto.js';
+import { ingerirCalendario, ingerirGmail } from '../cerebro/google.js';
+import { redigir } from '../canais/guarda.js';
+import { backupSqlite } from '../db/backup.js';
+import { RAIZ } from '../config/env.js';
+import { executarComando } from './comandos.js';
+import type { EntradaAgente } from './agente-cli.js';
+import type { Orquestrador } from './orquestrador.js';
+import { PREFIXO } from './quadro.js';
+import { claudeResumidor, resumirSessoesParadas } from './resumo-sessao.js';
+
+export function criarTarefas(app: App, orq: () => Orquestrador): Record<string, Tarefa> {
+  return {
+    /** Mensagem que chegou durante outra em curso: responde agora. */
+    responder: async ({ job }) => {
+      const m = JSON.parse(job.input) as MensagemRecebida;
+      await orq().responder(m);
+      return 'ok';
+    },
+
+    /** Mensagem de outro assunto que chegou com agente trabalhando: espera os jobs `apos` e então é roteada. */
+    'apos-agente': async ({ job, fila, aindaNao }) => {
+      const { m, apos, complemento } = JSON.parse(job.input) as { m: MensagemRecebida; apos: number[]; complemento?: { agente: string } };
+      const abertos = apos.map((id) => fila.obter(id)).filter((j): j is Job => !!j && (j.status === 'queued' || j.status === 'running'));
+      if (abertos.length) aindaNao(`esperando #${abertos.map((j) => j.id).join(', #')}`, 15);
+      // Complemento: vai direto ao mesmo agente (o job do pedido já está na lane, à frente).
+      if (complemento) await orq().despacharAgente(m, { rota: 'agente', agente: complemento.agente, tier: 'premium', motivo: 'complemento', consultar: [] }, '');
+      else await orq().responder(m);
+      return 'ok';
+    },
+
+    /** Espera as consultas dos especialistas e então enfileira o lead com o contexto delas. */
+    'agente-lead': async ({ job, fila, aindaNao }) => {
+      const { entrada, consultas } = JSON.parse(job.input) as { entrada: EntradaAgente; consultas: number[] };
+      const jobs = consultas.map((id) => fila.obter(id)).filter((j): j is Job => !!j);
+      const abertos = jobs.filter((j) => j.status === 'queued' || j.status === 'running');
+      if (abertos.length) aindaNao(`${abertos.length} consulta(s) em andamento`, 20);
+      const ctx: Record<string, string> = {};
+      for (const j of jobs) ctx[j.tarefa.replace(/^consulta:/, '')] = j.status === 'done' ? (j.resultado ?? '') : `(falhou: ${j.erro ?? '?'})`;
+      const lead = fila.enfileirar({
+        fila: 'agente', kind: 'agent', tarefa: `agente:${entrada.agente}`,
+        input: JSON.stringify({ ...entrada, consultas: ctx } satisfies EntradaAgente),
+        chat_id: job.chat_id, max_tentativas: 1, flow_ref: job.flow_ref,
+      });
+      return `lead enfileirado: #${lead.id}`;
+    },
+
+    /** Probe do `doctor --deep`: prova que o worker pega e conclui. Não toca memória. */
+    'doctor-probe': async () => 'ok',
+
+    consolidacao: async () => {
+      const r = await consolidar(app.cerebro, app.gateway, { modelo: app.ollama.modeloDe('geral'), agora: app.agora });
+      return `chats ${r.chats} · duplicatas ${r.duplicatas} · contradições ${r.contradicoes} · insights ${r.insights}${r.erro ? ` · erro: ${r.erro}` : ''}`;
+    },
+
+    /** Conversas observadas viram fatos (lane ollama, custo zero). */
+    ingestao: async () => {
+      const rs = await app.ingestao.ingerirObservados(app.ollama.modeloDe('geral'));
+      if (!rs.length) return 'nada novo';
+      return rs.map((r) => `${r.fonte}: ${r.lidos} msg → ${r.fatos} fato(s)${r.erro ? ` · erro: ${r.erro}` : ''}`).join(' | ');
+    },
+
+    /** E-mails recentes de todas as contas viram fatos. */
+    'ingestao:gmail': async ({ job }) => {
+      const { horas } = JSON.parse(job.input || '{}') as { horas?: number };
+      const chat = app.cfg.chatPermitido ?? 'cli';
+      const rs = await ingerirGmail(app.ingestao, chat, horas ?? 8, app.ollama.modeloDe('geral'), app.agora);
+      return rs.length ? rs.map((r) => `${r.fonte}: ${r.lidos} → ${r.fatos} fato(s)`).join(' | ') : 'nada novo';
+    },
+
+    /** Próximos compromissos de todas as agendas viram fatos. */
+    'ingestao:agenda': async ({ job }) => {
+      const { dias } = JSON.parse(job.input || '{}') as { dias?: number };
+      const chat = app.cfg.chatPermitido ?? 'cli';
+      const rs = await ingerirCalendario(app.ingestao, chat, dias ?? 14, app.ollama.modeloDe('geral'), app.agora);
+      return rs.length ? rs.map((r) => `${r.fonte}: ${r.lidos} → ${r.fatos} fato(s)`).join(' | ') : 'nada novo';
+    },
+
+    indexar: async () => {
+      const n = await indexarPendentes({ cerebro: app.cerebro, gateway: app.gateway, modeloEmbed: app.ollama.modeloDe('embed') });
+      return `${n} memórias indexadas`;
+    },
+
+    decair: async () => {
+      const r = app.cerebro.decair();
+      const p = app.cerebro.podarConversa(500);
+      return `decaídas ${r.decaidas} · removidas ${r.removidas} · conversa podada ${p}`;
+    },
+
+    backup: async () => {
+      const dest = await backupSqlite(app.db, resolve(RAIZ, 'store/backups'), app.agora);
+      return `backup em ${dest}`;
+    },
+
+    /** Cron genérico que roda um comando de barra e entrega no chat. */
+    'cron:comando': async ({ job }) => {
+      const { chatId, canal, input } = JSON.parse(job.input) as { chatId: string | null; canal: string; input: string };
+      if (!chatId) return 'sem chat';
+      const m: MensagemRecebida = { canal: canal as MensagemRecebida['canal'], chatId, texto: input, traceId: `cron-${job.id}`, recebidaEm: app.agora() };
+      const r = await executarComando(app, m);
+      if (r) app.bus.emit('mensagem.enviar', { canal: m.canal, chatId, texto: r, formato: 'markdown' });
+      return r ?? 'comando desconhecido';
+    },
+
+    /** Cron que manda uma mensagem ao orquestrador como se fosse o usuário (sessão isolada). */
+    'cron:mensagem': async ({ job }) => {
+      const { chatId, canal, input } = JSON.parse(job.input) as { chatId: string | null; canal: string; input: string };
+      if (!chatId) return 'sem chat';
+      await orq().responder({ canal: canal as MensagemRecebida['canal'], chatId, texto: input, traceId: `cron-${job.id}`, recebidaEm: app.agora() });
+      return 'ok';
+    },
+
+    'resumo-sessoes': async () => resumirSessoesParadas(app.db, app.agora(), claudeResumidor(app.cfg.claudeBin)),
+
+    lembretes: async () => {
+      const l = app.tarefas.lembretesVencidos();
+      for (const t of l) {
+        const canal = app.canaisAtivos.includes('telegram') ? 'telegram' : 'cli';
+        app.bus.emit('mensagem.enviar', { canal, chatId: t.chat_id, texto: `⏰ Lembrete: ${t.texto} (#${t.id}) — /tarefa feita ${t.id}` });
+      }
+      return `${l.length} lembrete(s)`;
+    },
+  };
+}
+
+/** `aoTerminar` do worker: entrega resultado/erro de job de agente no chat de origem. */
+export function criarEntregador(app: App) {
+  return async (job: Job): Promise<void> => {
+    if (!job.tarefa.startsWith('agente:')) return; // consultas e funções internas não avisam
+    const entrada = JSON.parse(job.input) as EntradaAgente;
+    // chat_id da tabela só guarda número (Telegram). Chat de texto (painel "painel", http) vem na entrada:
+    // antes o resultado era descartado e o painel só via "job #N" (11/11/2026, job 106706).
+    if (job.chat_id === null && !entrada.chatId) return;
+    const canal = (entrada.canal ?? 'telegram') as MensagemRecebida['canal'];
+    let texto: string;
+    if (job.status === 'done') {
+      texto = (job.resultado ?? '').trim() || '(agente terminou sem texto)';
+      app.cerebro.logarTurno(entrada.chatId, canal, 'assistant', texto, undefined, entrada.agente);
+      texto = PREFIXO.agente(job.id, entrada.agente) + texto;
+    } else {
+      texto = `❌ Job #${job.id} (${entrada.agente}) falhou: ${(job.erro ?? '?').slice(0, 400)}`;
+    }
+    const { texto: limpo } = redigir(texto);
+    app.bus.emit('mensagem.enviar', { canal, chatId: entrada.chatId, texto: limpo.slice(0, 3900), traceId: entrada.traceId, formato: 'markdown' });
+  };
+}

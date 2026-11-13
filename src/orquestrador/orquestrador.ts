@@ -1,0 +1,256 @@
+import { ObservadorJev } from './jev.js';
+// Orquestrador: recebe `mensagem.recebida` do bus, classifica, planeja e
+// despacha. Resposta direta = Ollama residente com contexto de memória;
+// agente = job na lane `agente` (CLI). Modo de chegada: `collect` (junta
+// mensagens seguidas em 2 s) — o padrão do plano §4.1.
+import type { App } from '../app.js';
+import type { MensagemRecebida } from '../bus/bus.js';
+import type { Job } from '../fila/types.js';
+import { montarContextoMemoria } from '../cerebro/contexto.js';
+import { classificarSetor } from '../cerebro/memoria.js';
+import { redigir } from '../canais/guarda.js';
+import { agentesCacheados } from './agentes.js';
+import { identidade, type EntradaAgente } from './agente-cli.js';
+import { executarComando } from './comandos.js';
+import { rotear, type Decisao } from './roteador.js';
+import { skillsCacheadas } from './skills.js';
+import { Geracoes, cancelarDoChat, lerModo } from './modo-fila.js';
+import { blocoPersonalidade } from './personalidade.js';
+import { PREFIXO, ehJobDeAgente, quadroDoChat } from './quadro.js';
+import { agenteDo, complementoEspera, ehCancelar, jobAlvo, mesmoAssunto } from './triagem.js';
+import { deveEscalar, ehPerguntaStatus, jobsAbertos, REGRA_ROTA_DIRETA, textoSituacao } from './situacao.js';
+
+const JANELA_COLLECT_MS = 2000;
+const MAX_CONTEXTO_TURNOS = 8;
+
+export class Orquestrador {
+  private readonly jev = new ObservadorJev();
+  private readonly pendentes = new Map<string, { msgs: MensagemRecebida[]; timer: NodeJS.Timeout }>();
+  private readonly emCurso = new Set<string>();
+  private readonly geracoes = new Geracoes();
+
+  constructor(private readonly app: App) {}
+
+  ligar(): () => void {
+    return this.app.bus.on('mensagem.recebida', (m) => this.receber(m));
+  }
+
+  /** Comandos passam direto; texto livre entra na janela `collect` por chat. */
+  receber(m: MensagemRecebida): void {
+    // Chat observado: NUNCA responde, nem a comando. Só alimenta o cérebro.
+    if (m.observar) { this.observar(m); return; }
+    if (m.texto.startsWith('/')) { void this.tratar(m); return; }
+    const chave = `${m.canal}:${m.chatId}`;
+    if (lerModo(this.app.prefs, m.chatId) !== 'collect') { void this.tratar(m); return; }
+    const p = this.pendentes.get(chave);
+    if (p) { p.msgs.push(m); clearTimeout(p.timer); }
+    const msgs = p?.msgs ?? [m];
+    const timer = setTimeout(() => {
+      this.pendentes.delete(chave);
+      const juntas: MensagemRecebida = { ...msgs[0], texto: msgs.map((x) => x.texto).join('\n'), traceId: msgs[msgs.length - 1].traceId };
+      void this.tratar(juntas);
+    }, JANELA_COLLECT_MS);
+    timer.unref?.();
+    this.pendentes.set(chave, { msgs, timer });
+  }
+
+  private enviar(origem: MensagemRecebida, texto: string, formato: 'texto' | 'markdown' = 'texto'): void {
+    const { texto: limpo, redigiu } = redigir(texto);
+    if (redigiu) this.app.log(`[guarda] segredo redigido na resposta para ${origem.canal}:${origem.chatId}`);
+    this.app.bus.responder(origem, limpo, formato);
+  }
+
+  async tratar(m: MensagemRecebida): Promise<void> {
+    const app = this.app;
+    const chave = `${m.canal}:${m.chatId}`;
+    try {
+      if (m.texto.startsWith('/')) {
+        const r = await executarComando(app, m);
+        if (r !== null) { this.enviar(m, r, 'markdown'); return; }
+      }
+      // "Qual situação?" com job aberto: responde lendo a fila, sem modelo.
+      if (ehPerguntaStatus(m.texto)) {
+        const s = textoSituacao(jobsAbertos(app.fila, chave), app.agora());
+        if (s) { this.enviar(m, s); return; }
+      }
+      const modo = lerModo(app.prefs, m.chatId);
+      // Agente trabalhando neste chat: triagem (cancelar / mesmo assunto / outro assunto), sem interromper.
+      if (modo !== 'interrupt' && !this.emCurso.has(chave)) {
+        const abertos = jobsAbertos(app.fila, chave).filter(ehJobDeAgente);
+        if (abertos.length) { await this.triar(m, abertos); return; }
+      }
+      if (modo === 'interrupt') {
+        // Independe de `emCurso`: o caso comum é agente rodando na fila com a
+        // resposta direta já encerrada. Avança a geração (descarta resposta
+        // direta em voo) e cancela fila + agentes do chat.
+        const ocupado = this.emCurso.has(chave);
+        this.geracoes.avancar(chave);
+        const n = cancelarDoChat(app.fila, chave, { emVoo: true });
+        this.emCurso.delete(chave);
+        if (ocupado || n) this.enviar(m, `⏹ Interrompi a anterior${n ? ` e cancelei ${n} job(s)` : ''}. Respondendo à nova.`);
+      } else if (this.emCurso.has(chave)) {
+        let aviso = '⏳ Ainda estou na sua mensagem anterior. Esta entrou na fila.';
+        let prioridade = 0;
+        if (modo === 'steer') {
+          const n = cancelarDoChat(app.fila, chave, { emVoo: false, apenasTarefa: 'responder' });
+          aviso = `↪️ Substituí ${n} mensagem(ns) na fila por esta; respondo assim que terminar a atual.`;
+          prioridade = 5;
+        }
+        this.enviar(m, aviso);
+        app.fila.enfileirar({ fila: 'chat', kind: 'function', tarefa: 'responder', input: JSON.stringify(m), chat_id: numOuNull(m.chatId), max_tentativas: 1, flow_ref: chave, prioridade });
+        return;
+      }
+      this.emCurso.add(chave);
+      const g = this.geracoes.atual(chave);
+      // Só limpa se ainda for a geração vigente: a resposta descartada por um
+      // interrupt não pode apagar a flag da resposta nova.
+      try { await this.responder(m); } finally { if (this.geracoes.vigente(chave, g)) this.emCurso.delete(chave); }
+    } catch (e) {
+      app.log(`[orq] erro em ${chave}: ${(e as Error).message}`);
+      this.enviar(m, `❌ ${(e as Error).message.slice(0, 300)}`);
+    }
+  }
+
+  async responder(m: MensagemRecebida): Promise<void> {
+    const app = this.app;
+    const parado = app.interruptores.bloqueiaResposta();
+    if (parado) { this.enviar(m, `⛔ Parado (${parado}). /retomar libera.`); return; }
+    const chave = `${m.canal}:${m.chatId}`;
+    const geracao = this.geracoes.atual(chave);
+    const agentes = agentesCacheados();
+    // Quadro do chat: o mesmo retrato (fila agora) para roteador e rota direta; o agente lê o seu no worker.
+    const quadro = quadroDoChat(app.fila, chave, app.agora());
+    const decisao = await rotear(app.gateway, app.ollama.modeloDe('roteador'), m.texto, agentes, skillsCacheadas(), { chatId: m.chatId, traceId: m.traceId, quadro, keepAlive: app.ollama.papel('roteador').keep_alive });
+    app.log(`[orq] ${m.canal}:${m.chatId} → ${decisao.rota}${decisao.agente ? '/' + decisao.agente : ''} tier=${decisao.tier} (${decisao.motivo})`);
+
+    // Observação não bloqueia o atendimento nem entrega sua sugestão ao dispatcher.
+    void this.jev.observar(app, m, agentes, skillsCacheadas(), decisao)
+      .catch(() => app.log('[jev] falha ao registrar observação; rota preservada'));
+
+    const memoria = await montarContextoMemoria(
+      { cerebro: app.cerebro, gateway: app.gateway, modeloEmbed: app.ollama.modeloDe('embed'), tetoTokens: 600 },
+      m.chatId, m.texto, m.traceId,
+    );
+
+    if (!this.geracoes.vigente(chave, geracao)) { app.log(`[orq] ${chave} descartado antes de despachar (interrupt)`); return; }
+    if (decisao.rota === 'agente') { await this.despacharAgente(m, decisao, memoria); return; }
+
+    const historico = app.cerebro.ultimosTurnos(m.chatId, MAX_CONTEXTO_TURNOS);
+    const sistema = [identidade(), REGRA_ROTA_DIRETA, quadro, blocoPersonalidade(app.prefs, m.chatId), app.vault.ler('USER.md', 800), memoria].filter(Boolean).join('\n\n');
+    const r = await app.gateway.chamar({
+      tier: decisao.tier, agente: 'direto', chatId: m.chatId, traceId: m.traceId, motivoTier: decisao.tier !== 'local' ? decisao.motivo : undefined,
+      temperatura: 0.4, maxTokens: 1200, timeoutMs: 180_000, keepAlive: app.ollama.papel('geral').keep_alive,
+      mensagens: [{ role: 'system', content: sistema }, ...historico, { role: 'user', content: m.texto }],
+    });
+    const texto = r.texto.trim() || '(sem resposta)';
+    if (!this.geracoes.vigente(chave, geracao)) { app.log(`[orq] ${chave} resposta descartada (interrupt)`); return; }
+    // Trava: rota sem ferramenta não termina em promessa ("vou verificar…") — sobe para o agente.
+    if (deveEscalar(texto)) {
+      app.log(`[orq] ${chave} rota direta prometeu ação/pediu escalada → agente lead`);
+      await this.despacharAgente(m, { rota: 'agente', agente: 'lead', tier: 'premium', motivo: 'rota direta prometeu ação', consultar: [] }, memoria);
+      return;
+    }
+    this.enviar(m, PREFIXO.local + texto);
+    this.aprender(m, texto);
+  }
+
+  /** Mensagem nova com agente trabalhando: cancela, vira complemento do mesmo agente, ou espera a vez. */
+  private async triar(m: MensagemRecebida, abertos: Job[]): Promise<void> {
+    const app = this.app;
+    const chave = `${m.canal}:${m.chatId}`;
+    if (ehCancelar(m.texto)) {
+      const n = cancelarDoChat(app.fila, chave, { emVoo: true });
+      this.enviar(m, `⏹ Cancelei ${n} job(s) deste chat.`);
+      return;
+    }
+    const alvo = jobAlvo(abertos)!;
+    // qwen (geral, residente): 6/6 em frases reais; o llama3.2 marcou "outro assunto" em tudo (3/6).
+    const t = await mesmoAssunto(app.gateway, app.ollama.modeloDe('geral'), alvo, m.texto, { chatId: m.chatId, traceId: m.traceId, keepAlive: app.ollama.papel('geral').keep_alive });
+    app.log(`[orq] ${chave} triagem vs #${alvo.id}: ${t.mesmo ? 'mesmo assunto' : 'outro assunto'} (${t.motivo})`);
+    if (t.mesmo) {
+      const agente = agenteDo(alvo);
+      const comp: MensagemRecebida = { ...m, texto: `[Complemento do pedido #${alvo.id}, mesmo assunto]\n${m.texto}` };
+      // Com especialistas consultando, o job `agente:<x>` do pedido ainda não existe:
+      // o complemento espera (apos-agente) para não rodar ANTES do pedido original.
+      if (complementoEspera(abertos)) {
+        const espera = app.fila.enfileirar({
+          fila: 'io', kind: 'function', tarefa: 'apos-agente', input: JSON.stringify({ m: comp, apos: abertos.map((j) => j.id), complemento: { agente } }),
+          chat_id: numOuNull(m.chatId), max_tentativas: 1, flow_ref: chave,
+        });
+        this.enviar(m, `↪️ Mesmo assunto do #${alvo.id}: guardei (#${espera.id}) e entra como complemento (${agente}, mesma conversa) logo depois dele.`);
+        return;
+      }
+      await this.despacharAgente(comp, { rota: 'agente', agente, tier: 'premium', motivo: 'complemento', consultar: [] }, '',
+        (id) => `↪️ Mesmo assunto do #${alvo.id}: vira o job #${id} (${agente}, mesma conversa) e roda logo depois dele.`);
+      return;
+    }
+    const espera = app.fila.enfileirar({
+      fila: 'io', kind: 'function', tarefa: 'apos-agente', input: JSON.stringify({ m, apos: abertos.map((j) => j.id) }),
+      chat_id: numOuNull(m.chatId), max_tentativas: 1, flow_ref: chave,
+    });
+    this.enviar(m, `📥 Outro assunto: ficou na fila (#${espera.id}) e entra depois do #${alvo.id}. /status mostra a situação.`);
+  }
+
+  async despacharAgente(m: MensagemRecebida, d: Decisao, memoria: string, aviso?: (jobId: number) => string): Promise<void> {
+    const app = this.app;
+    const agente = d.agente ?? 'lead';
+    const bloqueio = app.interruptores.bloqueiaAgente(agente);
+    if (bloqueio) { this.enviar(m, `⛔ Agente ${agente} parado (${bloqueio}). /retomar libera; enquanto isso respondo só pelo modelo local.`); return; }
+    const entrada: EntradaAgente = { chatId: m.chatId, canal: m.canal, texto: m.texto, agente, memoria, traceId: m.traceId, personalidade: blocoPersonalidade(app.prefs, m.chatId) || undefined };
+    // Especialistas read-only em paralelo: cada um vira job próprio; o lead
+    // recebe as saídas via `consultas` quando a tarefa `agente-lead` rodar.
+    const consultas = (d.consultar ?? []).map((id) => app.fila.enfileirar({
+      fila: 'agente', kind: 'agent', tarefa: `consulta:${id}`, input: JSON.stringify({ ...entrada, agente: id, somenteLeitura: true } satisfies EntradaAgente),
+      chat_id: numOuNull(m.chatId), max_tentativas: 1, prioridade: 1, flow_ref: `${m.canal}:${m.chatId}`,
+    }).id);
+    const job = app.fila.enfileirar({
+      fila: consultas.length ? 'io' : 'agente',
+      kind: consultas.length ? 'function' : 'agent',
+      tarefa: consultas.length ? 'agente-lead' : `agente:${agente}`,
+      input: consultas.length ? JSON.stringify({ entrada, consultas }) : JSON.stringify(entrada),
+      chat_id: numOuNull(m.chatId), max_tentativas: 1, flow_ref: `${m.canal}:${m.chatId}`,
+    });
+    const fila = app.fila.listar({ fila: 'agente', status: 'queued' }).length;
+    if (aviso) this.enviar(m, aviso(job.id));
+    else this.enviar(m, `🧠 ${agente}${consultas.length ? ` (+${consultas.length} especialista${consultas.length > 1 ? 's' : ''})` : ''} — job #${job.id}${fila > 1 ? ` · ${fila - 1} na frente` : ''}. /status ${job.id} acompanha.`);
+    app.cerebro.logarTurno(m.chatId, m.canal, 'user', m.texto, undefined, agente);
+  }
+
+  /**
+   * Mensagem de chat observado: entra no `conversation_log` com o autor e o nome
+   * do grupo, e a ingestão noturna extrai os fatos depois. Não gasta LLM aqui —
+   * um grupo movimentado geraria uma chamada por mensagem.
+   */
+  observar(m: MensagemRecebida): void {
+    try {
+      const quem = m.usuario ? `${m.usuario}: ` : '';
+      // `session_id` guarda o NOME do grupo em turno observado (não há sessão de
+      // agente aqui); é o que a ingestão usa para dar contexto ao bloco.
+      this.app.cerebro.logarTurno(m.chatId, m.canal, 'user', `${quem}${m.texto}`, m.titulo, 'observado');
+    } catch (e) {
+      this.app.log(`[orq] observar falhou: ${(e as Error).message}`);
+    }
+  }
+
+  /** Grava turno + memória (sinais PT-BR) e propõe entrada no vault quando é fato durável. */
+  aprender(m: MensagemRecebida, resposta: string, agente = 'direto'): void {
+    const app = this.app;
+    try {
+      app.cerebro.logarTurno(m.chatId, m.canal, 'user', m.texto, undefined, agente);
+      app.cerebro.logarTurno(m.chatId, m.canal, 'assistant', resposta, undefined, agente);
+      if (m.texto.length <= 20 || m.texto.startsWith('/')) return;
+      const setor = classificarSetor(m.texto);
+      const mem = app.cerebro.salvar(m.chatId, m.texto, setor, 'v3');
+      if (mem && setor === 'semantic' && m.texto.length <= 300 && /\b(meu nome|moro em|trabalho|prefiro|sempre|nunca|lembr)/i.test(m.texto)) {
+        const p = app.vault.propor(m.chatId, /\b(meu|minha|eu sou|moro|trabalho)\b/i.test(m.texto) ? 'USER.md' : 'MEMORY.md', m.texto.slice(0, 300));
+        app.bus.responder(m, `📝 Guardar no vault? "${p.texto.slice(0, 80)}${p.texto.length > 80 ? '…' : ''}" → /memoria aprovar ${p.id} ou /memoria descartar ${p.id}`);
+      }
+    } catch (e) {
+      app.log(`[orq] aprender falhou: ${(e as Error).message}`);
+    }
+  }
+}
+
+export function numOuNull(chatId: string): number | null {
+  return /^-?\d+$/.test(chatId) ? Number(chatId) : null;
+}

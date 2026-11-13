@@ -1,0 +1,14 @@
+name: Content
+description: YouTube scripts, LinkedIn posts, carousels, trend research, content calendar
+
+telegram_bot_token_env: CONTENT_BOT_TOKEN
+
+model: topo
+
+obsidian:
+  vault: ~/vault
+  folders:
+    - inbox/
+    - projects/
+  read_only:
+    - daily/

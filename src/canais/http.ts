@@ -1,0 +1,148 @@
+// HTTP na porta própria (3142): GET /health (o hub `wifi` consome), GET /status,
+// GET /api/* (dashboard), GET / e /painel (painel de monitoramento, src/painel/),
+// GET /dashboard (dashboard antigo), POST /api/vagas (só com Bearer), POST /mensagem (canal http:
+// texto entra no bus, resposta volta na mesma requisição). Token opcional
+// via `DASHBOARD_TOKEN_V3` para tudo que não é /health.
+// O painel com login para LAN/túnel mora em OUTRA porta (PAINEL_PORT, 3143): src/painel/servidor-painel.ts.
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+
+import type { App } from '../app.js';
+import { novoTraceId } from '../bus/bus.js';
+import { FILAS } from '../fila/filas.js';
+import { rssMb } from '../ollama/ram.js';
+import { DASHBOARD_HTML } from '../dashboard/html.js';
+import { CONCORRENCIAS } from '../fila/filas.js';
+import { RAIZ } from '../config/env.js';
+import { tratarPainel } from '../painel/http-painel.js';
+import { PAINEL_HTML } from '../painel/tela/pagina.js';
+import { caminhosPadrao, depsPadrao } from '../painel/tipos.js';
+import { telegramLigado } from '../painel/telegram-alerta.js';
+import { CHAT_ID, Conversa } from '../painel/conversa.js';
+import { ligarServidorPainel } from '../painel/servidor-painel.js';
+import { configAccess, VerificadorAccess } from '../painel/auth/cf-access.js';
+import { Sessoes } from '../painel/auth/sessoes.js';
+import { homedir } from 'node:os';
+import { resolve } from 'node:path';
+
+function json(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify(body));
+}
+
+async function corpo(req: IncomingMessage, max = 64 * 1024): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let s = ''; req.on('data', (c) => { s += c; if (s.length > max) { reject(new Error('corpo grande demais')); req.destroy(); } });
+    req.on('end', () => resolve(s)); req.on('error', reject);
+  });
+}
+
+export function montarHealth(app: App): Record<string, unknown> {
+  const e = app.ollama.estado;
+  const hb = app.heartbeat.ultimo();
+  const fila = Object.fromEntries(FILAS.map((f) => [f, { queued: app.fila.listar({ fila: f, status: 'queued' }).length, running: app.fila.listar({ fila: f, status: 'running' }).length }]));
+  const orc = app.orcamento.avaliar('barato');
+  const ok = (e?.online ?? false) && (e?.ram.disponivelGb ?? 0) >= 10 && (!hb || app.agora() - hb.ultimo_em < 3 * 1800);
+  return {
+    ok, versao: app.cfg.versao, instancia: app.cfg.instancia, uptime_s: app.agora() - app.iniciadoEm, rss_mb: rssMb(),
+    canais: app.canaisAtivos, fila,
+    ollama: e ? { online: e.online, carregados: e.carregados.map((m) => ({ nome: m.name, gb: Math.round(m.size / 1e9) })), latencia_ms: e.latenciaMs, probe_em: e.probeEm, erro: e.erro } : null,
+    ram: e?.ram ?? null,
+    heartbeat: hb ? { ultimo_em: hb.ultimo_em, ha_s: app.agora() - hb.ultimo_em } : null,
+    orcamento: { pct: orc.pct, gasto_usd: orc.gastoUsd, limite_usd: orc.limiteUsd, travado: !orc.permitido },
+  };
+}
+
+export function ligarHttp(app: App): Server {
+  const token = process.env.DASHBOARD_TOKEN_V3;
+  const autorizado = (req: IncomingMessage, url: URL): boolean => {
+    if (!token) return true;
+    const h = req.headers.authorization;
+    return h === `Bearer ${token}` || url.searchParams.get('token') === token;
+  };
+
+  // Painel de monitoramento (3.13.6): só leitura de arquivos locais e do banco; a única escrita é POST /api/vagas.
+  const chatAlerta = app.cfg.chatPermitido;
+  // Conversa do painel (PAINEL_CHAT=1): entra no bot como canal http, chat "painel"; respostas (inclusive de jobs) voltam pelo bus.
+  const conversa = new Conversa((texto) => app.bus.emit('mensagem.recebida', { canal: 'http', chatId: CHAT_ID, texto, traceId: novoTraceId(), recebidaEm: app.agora() }));
+  app.bus.on('mensagem.enviar', (m) => { if (m.canal === 'http' && m.chatId === CHAT_ID) conversa.guardar('bot', m.texto); });
+  const painel = depsPadrao({
+    db: app.db, versao: app.cfg.versao, conversa, concorrenciaV3: { ...CONCORRENCIAS }, caminhos: caminhosPadrao(homedir(), RAIZ),
+    enviarTelegram: telegramLigado() && chatAlerta ? (texto) => app.bus.emit('mensagem.enviar', { canal: 'telegram', chatId: chatAlerta, texto }) : undefined,
+  });
+
+  const srv = createServer(async (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://x');
+    try {
+      if (url.pathname === '/health') { const h = montarHealth(app); json(res, h.ok ? 200 : 503, h); return; }
+      if (!autorizado(req, url)) { json(res, 401, { erro: 'token' }); return; }
+
+      if (url.pathname === '/') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(PAINEL_HTML); return;
+      }
+      if (url.pathname === '/dashboard') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(DASHBOARD_HTML); return;
+      }
+      if (await tratarPainel(req, res, url, painel)) return;
+      if (url.pathname === '/status' || url.pathname === '/api/fila') {
+        json(res, 200, { lanes: FILAS.map((f) => ({ lane: f, queued: app.fila.listar({ fila: f, status: 'queued' }).length, running: app.fila.listar({ fila: f, status: 'running' }).length })), recentes: app.fila.listar({ limite: 30 }).map((j) => ({ ...j, input: undefined, resultado: j.resultado?.slice(0, 200) })) });
+        return;
+      }
+      if (url.pathname === '/api/custo') {
+        const desde = app.agora() - 30 * 86400;
+        json(res, 200, { hoje: app.registro.hoje(), semana: app.registro.semana(), mes: app.registro.mes(), porDia: app.registro.porDia(14), porAgente: app.registro.porAgente(desde), porTier: app.registro.porTier(desde), orcamento: app.orcamento.avaliar('barato') });
+        return;
+      }
+      if (url.pathname === '/api/memoria') {
+        const chat = url.searchParams.get('chat') ?? app.cfg.chatPermitido ?? 'cli';
+        json(res, 200, { contagem: app.cerebro.contagem(chat), importantes: app.cerebro.importantes(chat, 10), recentes: app.cerebro.recentes(chat, 10), insights: app.cerebro.insights(chat, 5), propostas: app.vault.pendentes(chat) });
+        return;
+      }
+      if (url.pathname === '/api/ollama') { json(res, 200, app.ollama.estado ?? (await app.ollama.probe())); return; }
+      if (url.pathname === '/api/cron') { json(res, 200, app.cron.listar()); return; }
+      if (url.pathname === '/api/health') { json(res, 200, montarHealth(app)); return; }
+
+      if (url.pathname === '/mensagem' && req.method === 'POST') {
+        const b = JSON.parse((await corpo(req)) || '{}') as { texto?: string; chatId?: string };
+        if (!b.texto) { json(res, 400, { erro: 'texto obrigatório' }); return; }
+        const chatId = b.chatId ?? 'http';
+        const traceId = novoTraceId();
+        const respostas: string[] = [];
+        const off = app.bus.on('mensagem.enviar', (m) => { if (m.canal === 'http' && m.chatId === chatId) respostas.push(m.texto); });
+        app.bus.emit('mensagem.recebida', { canal: 'http', chatId, texto: b.texto, traceId, recebidaEm: app.agora() });
+        // Espera até 3 min pela primeira resposta (resposta direta); jobs de agente respondem com o número do job.
+        const t0 = Date.now();
+        while (!respostas.length && Date.now() - t0 < 180_000) await new Promise((r) => setTimeout(r, 200));
+        off();
+        json(res, 200, { traceId, respostas });
+        return;
+      }
+      json(res, 404, { erro: 'rota' });
+    } catch (e) {
+      json(res, 500, { erro: (e as Error).message });
+    }
+  });
+  // Loopback por padrão: /mensagem leva a um `claude -p --dangerously-skip-permissions`.
+  // O hub `wifi` roda nesta máquina, então /health continua alcançável. Expor na
+  // LAN exige HTTP_BIND_V3=0.0.0.0 E DASHBOARD_TOKEN_V3 definido.
+  const bind = process.env.HTTP_BIND_V3 || '127.0.0.1';
+  if (bind !== '127.0.0.1' && bind !== 'localhost' && !token) {
+    app.log('[http] HTTP_BIND_V3 fora do loopback sem DASHBOARD_TOKEN_V3 — recusado, ficando em 127.0.0.1');
+  }
+  const bindFinal = (bind !== '127.0.0.1' && bind !== 'localhost' && !token) ? '127.0.0.1' : bind;
+  srv.listen(app.cfg.porta, bindFinal, () => app.log(`[http] ouvindo em ${bindFinal}:${app.cfg.porta}`));
+
+  // Painel em porta própria (3.13.7): só login + painel + vagas. É ESTA porta que pode ir
+  // para a LAN (PAINEL_BIND) ou para o túnel; a 3142 acima fica no loopback.
+  const portaPainel = Number(process.env.PAINEL_PORT ?? 3143);
+  if (Number.isInteger(portaPainel) && portaPainel > 0 && portaPainel !== app.cfg.porta) {
+    const depsSessao = depsPadrao({ db: app.db, versao: app.cfg.versao, conversa, concorrenciaV3: { ...CONCORRENCIAS }, caminhos: caminhosPadrao(homedir(), RAIZ), porSessao: true });
+    const cfa = configAccess();
+    const srvPainel = ligarServidorPainel({
+      deps: depsSessao,
+      sessoes: new Sessoes(resolve(RAIZ, 'store/painel-sessoes.json')),
+      access: cfa ? new VerificadorAccess(cfa) : null,
+    }, portaPainel, process.env.PAINEL_BIND, app.log);
+    srv.on('close', () => srvPainel.close());
+  }
+  return srv;
+}

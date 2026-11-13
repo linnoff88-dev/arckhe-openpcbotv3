@@ -1,0 +1,411 @@
+# CHANGELOG — openpcbotv3
+
+## 3.30.15 — 2026-11-13
+
+Jarvis: **uma voz só**. Com duas abas do Jarvis abertas, as duas liam o mesmo alerta, cada uma com a sua voz (Nei: "falava a Maria e depois o homem"). Agora só a aba dona fala (a última que ganhou foco ou ficou visível; trava em `localStorage` `jarvis.dono`, renovada a cada 5 s); as outras mostram o texto caladas. E a primeira fala espera as vozes do navegador carregarem, em vez de sair na voz padrão (masculina).
+
+## 3.30.14 — 2026-11-13
+
+Painel Jarvis, quadro **Esperando você** (pedido do Nei, 13/11): **Visto** agora tira o item da lista (antes só esmaecia); **Depois** esconde por 3 h e o item volta sozinho (antes era igual ao Visto). Link "mostrar N escondidos" para desfazer. Marcas antigas são convertidas. Novo item **❓ pergunta**: sessão viva do Claude que terminou a vez perguntando (linha `! Sua resposta:` ou última linha com "?") aparece no quadro (`perguntaPendente` em `fontes/sessoes.ts`, teste em `sessoes.test.ts`). Botão **Avisos** (tecla 6): notificação do navegador para pergunta de sessão, OK do inemaccbot e erro — só em 127.0.0.1:3142 ou ccc.inema.pro (a 3143 por IP não permite).
+
+## 3.29.14 — 2026-11-12
+
+Quadro **Tendências de rede** (`fontes/tendencias.ts`): resumo do youtube-bombando (monitor diário 07:15 dos vídeos/assuntos que mais crescem no YouTube), lido de `~/projetos/youtube-bombando/painel/dados.json` (`BOMBANDO_DIR` troca). Cartão com nº de vídeos, assuntos em alta, os 3 primeiros "mais quentes" e o link; detalhe com conclusão do "Por que bombou?", assuntos e o mais quente de cada nicho. O painel completo do youtube-bombando passa a abrir dentro do ccc em **`/bombando/`** (mesmo login; só `index.html`, `dados.json` e `historico/AAAA-MM-DD.html`, nome validado por regex). Também no Jarvis (↗). Grade: linha de baixo vira Terminais (3) + Tendências + Minha escada. Teste `painel/tendencias.test.ts`.
+
+## 3.28.14 — 2026-11-12
+
+Regra do agente (`orquestrador/agente-cli.ts`): o avatar do Nei sai SEMPRE pelo estúdio HeyGen, sem pedir confirmação; vídeo explicativo/de projeto = explicavideos v2 com avatar; a skill `video-explicativo` (sem avatar) só se o Nei pedir pelo nome. A regra antiga ("nunca gere mídia paga (HeyGen, render) sem confirmação") fez o job do niveis-autonomia (12/11) sair sem avatar. Criar pela API do HeyGen e mídia paga por API continuam pedindo confirmação.
+
+## 3.27.14 — 2026-11-12
+
+Quadro **Minha escada** (`fontes/escada.ts`): quanto da rotina a IA já conduz (AL4+AL5), lido só de `~/.local/share/minha-escada/escada.json` (gerado 1x por dia por outro processo). Cartão com a parcela grande, seta contra o relatório anterior e a missão de hoje; detalhe com missão, tarefas (h/sem, nível, próximo, crítica), as 3 ações, projeção 0/1/3/6 meses, comparação com a Anthropic (ago/2026), fontes e motor, e o caminho do relatório. Sem o arquivo: "sem relatório ainda". Também no Jarvis (frase, ícone ⟰, número, explicação, detalhe). Grade: entra no canto direito da linha de baixo (Terminais fica com 4 colunas). Sem alerta novo. Teste `painel/escada.test.ts`.
+
+## 3.26.14 — 2026-11-11
+
+Correção: pedido de "manda o vídeo" chegava como texto `[SEND_FILE:/caminho]` (Nei: "manda como texto sendfile… pedi várias vezes"). O marcador era do v2 e o canal Telegram do v3 só mandava texto. Agora `src/canais/arquivos.ts` tira `[SEND_FILE:caminho|legenda]`/`[SEND_PHOTO:…]` do texto e o canal manda o arquivo: vídeo como vídeo (streaming), imagem como foto, áudio como áudio, resto como documento; falha no formato próprio cai para documento. Barra segredo (.env, chaves, .ssh, banco, cookies/tokens), caminho relativo, inexistente e > 50 MB, avisando no chat. Teste `canais/arquivos.test.ts`.
+
+## 3.26.13 — 2026-11-11
+
+Correção: a resposta do bot nunca chegava ao chat do painel (Nei: "me respondeu lead — job 106706"). O entregador de job de agente parava em `chat_id` nulo, e o chat "painel" (texto) não cabe na coluna numérica; agora usa o chat da entrada do job. Teste novo `orquestrador/entregador.test.ts`. No Jarvis, o aviso "job #N" vira "pensando…" (não é falado), o prefixo "#N lead ·" sai da fala e a voz do navegador sai em volume máximo.
+
+## 3.26.12 — 2026-11-11
+
+Jarvis, modo Gráficos: entram VPS (barras de disco e de memória das 6), Bots (v3, inemaccbot, v2 com estado), Outras APIs (chamadas de hoje por provedor + quantas liberadas) e Radar Viral (Nei: "vps e outros card tem aparecer nos gráficos do jarvis"). Cada bloco abre o detalhe ao clicar.
+
+## 3.25.12 — 2026-11-11
+
+Jarvis: o ícone "Claude e Codex" mostra os dois números (Claude NN% · Codex NN%) em vez de só o maior limite (Nei: "não apareceu no painel do jarvis").
+
+## 3.25.11 — 2026-11-11
+
+Um quadro por bot, os dois números no Claude e Codex, Radar uma vez só (Nei: "claude e codex tem ter os dois números. radar viral 1x. card do inemaccbot e do v2 e v3").
+- Quadros **Bot v3**, **inemaccbot** e **Bot v2** no lugar de "Bots". O v2 agora é lido do banco dele (`openpcbotv2/store/openpcbot.db`, só leitura): última conversa, mensagens 24 h / 7 dias, custo 7 dias, vídeos por estado. As regras de alerta de serviço e de job falho caem no quadro do bot certo (mesmas chaves). O grupo `bots` continua no JSON.
+- Grade com 5 colunas: Esperando você ocupa a coluna da esquerda, Terminais a linha de baixo.
+- "Claude e Codex": o título mostra os dois (Claude NN% · Codex NN%).
+- Produção: cada rotina aparece uma vez no cartão (a mais recente, com ×N); o radar-viral roda de hora em hora e enchia a lista.
+- Jarvis: os três bots, e detalhe de VPS e Outras APIs ao clicar.
+- O laço da tela ignora quadro que não existe na página (não derruba a leitura).
+
+## 3.24.11 — 2026-11-10
+
+Quadros VPS, Claude e Codex, Outras APIs (Nei: "quero card das 6 vps, o card o codex e o claude, e outro card com outras apis").
+- Quadro **VPS** (`fontes/vps.ts`): as 6 do vps.json da telemetria, com disco, memória, carga, containers e tempo no ar por SSH só de leitura, de 10 em 10 min em segundo plano, tentando as chaves padrão, `_inema` e `_vps` (a telemetria só usa a padrão e não entrava em 3). Alerta quando uma não responde ou passa de 90% de disco. Mostra em duas colunas no cartão.
+- "Créditos e logins" vira **Claude e Codex**: só os limites da assinatura e quando voltam a zero.
+- Quadro **Outras APIs** (`fontes/apis.ts`): uso do bot v3 por provedor (hoje e 7 dias), a lista do que está liberado/só leitura/pedir antes (`~/.config/inema/painel-apis.json`, espelho do CLAUDE.md) e os avisos de login. Não consulta saldo de serviço externo (seria chamar API).
+- Grade com 4 linhas: VPS e Outras APIs entram, Terminais fica com a linha de baixo inteira. Também no Jarvis (lista, ícones, fala).
+- Correção: o limite do Codex sumia quando a sessão mais nova ainda não tinha a medida; agora procura nas anteriores (até 3 dias).
+
+## 3.23.11 — 2026-11-10
+
+Jarvis primeiro, voz feminina e conversa com o bot (Nei: "sim cai no jarvis primeiro"; "pode ser uma mulher, q saiba falar português correto e termos em inglês"; "o chat q pedi para trocar ideia com o jarvis sobre qq coisa do painel").
+- O login (e quem já está logado em /login) cai no `/jarvis`; o clássico continua em `/painel`.
+- Botão "Voz:" troca entre as vozes em português do navegador; escolhe sozinho uma voz de mulher (prefere as "Multilingual"/"Natural" do Edge). Fora das Multilingual, termos em inglês (Claude, deploy, YouTube, lives, GPU…) são lidos com pronúncia aportuguesada só na fala.
+- Campo "Pergunte ao Jarvis": a pergunta vai ao bot (PAINEL_CHAT=1, mesmo CSRF) junto com o que está na tela (contagem, alertas, detalhe aberto) e o endereço do JSON completo do painel; a resposta aparece e é lida em voz alta.
+
+## 3.22.11 — 2026-11-10
+
+Contagem de falhas de memória da GPU corrigida e nome novo (Nei: "sim, corrige e muda o nome").
+
+- `fontes/maquina.ts`: uma falha escreve 3–5 linhas `NV_ERR_NO_MEMORY` no kernel; linhas a até 5 s da anterior agora contam como uma falha só (em 10/11 o painel mostrava 376 em 24 h, eram ~86 falhas). Teste novo em `painel.test.ts`.
+- "GPU sem memória" virou "Falhas de memória da GPU (24 h)" no painel, no modo Jarvis e no alerta. A GB10 divide a RAM com o sistema, então a linha conta pedidos de memória recusados, não falta de memória no momento.
+
+## 3.22.10 — 2026-11-10
+
+Bloco **Radar Viral** no painel (Nei: "no painel e no sistema serão conhecidos como radar viral e vai ter um bloco no painel de controle").
+
+- Quadro novo `radar` (lugar `rad`, ao lado de Vagas): fin, saúde, direito, contábil e futebol publicando no lives24 por fila única, 1 por hora. Mostra o que saiu hoje por nicho, a fila (liberado / espera o horário / SEGURADO), a próxima rodada e os últimos envios com link. Fonte só leitura `fontes/radar.ts` (`~/projetos/radar-viral/radar.json` + `historico.jsonl` + marcadores `PUBLICAR_PENDENTE`). Também no modo Jarvis.
+- Fila "Virais com publicação marcada" virou "Radar Viral (lives24)" (timer radar-viral de hora em hora; futviral-publicar e contaviral-publicar desligados).
+
+## 3.21.10 — 2026-11-10
+
+Conversar pelo painel e alerta de GPU explicado (Nei: "seria legal eu poder ter um chat no painel falando com o bot ou um terminal"; "olha sobre o erro no painel").
+
+- **Conversar** (EM TESTE, `PAINEL_CHAT=1`): gaveta no clássico. "🤖 Bot (v3)" manda o texto ao bot como canal http, chat `painel` (mesmo caminho do /mensagem, sem abrir a 3142), e as respostas — inclusive de jobs — voltam pelo bus para a gaveta. "🖥 sessão" mostra a tela ao vivo de uma sessão no tmux do painel e digita nela (Esc, Ctrl+C, ↑ ↓, Enter). "+ Novo terminal" abre o Claude numa pasta de `~/projetos` (`POST /api/painel/terminal/novo`, só com PAINEL_ASSUMIR=1). CSRF igual ao Assumir; log em `~/.local/share/inema/painel-chat.log` (início do texto, mascarado). Testado: "Responda apenas com a frase: painel ok" → "🏠 painel ok" em 26 s.
+- Alerta "GPU sem memória" diz quanto da RAM está presa em cache de disco; quadro Máquina mostra a linha "Cache de disco" quando passa de 16 GB (a GPU usa a mesma RAM; com cache alto o driver nega bloco grande mesmo com "disponível" alto).
+
+## 3.20.10 — 2026-11-10
+
+Terminais não ficam mais cortados no quadro (Nei: "os terminais ficam cortados").
+
+- No quadro da visão geral cada sessão ocupa 2 linhas (projeto + nome; contexto · ativo há · modelo · pasta), com a cor do projeto na borda: cabem ~12 sessões no lugar onde cabiam 4. Os cartões completos continuam no detalhe.
+- Se ainda passar do quadro, o fim esmaece e aparece "role ↓ para ver mais".
+
+## 3.20.9 — 2026-11-10
+
+Organizar a tela (Nei: "painel tem mover ou tem reorganizar a tela?").
+
+- Botão **Organizar** no clássico: tocar num quadro e depois em outro troca os dois de lugar (ou arrastar com o mouse); **Pronto** sai do modo, **Restaurar padrão** volta ao original. Os lugares mantêm o tamanho (esquerda alta, baixo largo), então dá para pôr Terminais ou Publicação no lugar grande. Fica guardado neste aparelho (localStorage `painel.layout`); vale também no celular (ordem da coluna).
+
+## 3.19.9 — 2026-11-10
+
+Filas item por item (Nei: "quero poder ver o que está nas filas, qual os estados").
+
+- Fonte nova `fontes/filas.ts` (só leitura): r7ex, espanhol, cidades, lives11→Metricool, aventuras (txt), marcadores `PUBLICAR_PENDENTE` dos virais e esperas do continua, todas com os mesmos estados (na fila · publicando · feito · erro · retirado), canal, quando, tentativas e o fim da mensagem de erro.
+- Quadro Publicação: linha "Filas: N publicando · N na fila · N com erro". Detalhe: uma seção por fila com contagem por estado, quem consome e quando, caminho do arquivo e a lista (abertos primeiro + 5 feitos mais recentes).
+- Alerta novo `fila-ilegivel`: `estado.json` do continua vazio ou corrompido vira erro na faixa (em 10/11 00:29 o disco cheio zerou o arquivo e o painel mostrava "nenhuma espera" com o vigia parado).
+
+## 3.18.9 — 2026-11-10
+
+Quadro de terminais cabe qualquer número de sessões (Nei: "nas imagens ele corta embaixo, e se crescer como será colocar todos ali").
+
+- O quadro mostra TODAS as sessões (antes 4), da mais recente para a mais antiga, rolando dentro do quadro; Lista em colunas em vez de uma por linha; Imagens com a faixa de cor ao lado (cartão mais baixo).
+
+## 3.18.8 — 2026-11-10
+
+Terminais mostram onde cada sessão trabalha (Nei: "embaixo o nome de onde está trabalhando: a pasta e o projeto, modelo e contexto e ativo"; "nos ícones e imagens não aparece, na lista falta o nome do projeto"; "pode ter estas sessões pelo painel Jarvis também").
+
+- Clássico (Lista, Ícones e Imagens): título = projeto em que a sessão está trabalhando (o "→ X" da statusline; senão o da pasta) + nome da sessão + tmux; embaixo, sem cortar: 📁 pasta · 🧠 modelo/esforço e contexto · ⏱ ativa há / aberta há. Clicar na sessão no cartão abre direto as abas Dados/Conteúdo/Terminal.
+- Jarvis: "Sessões do Claude" na coluna da esquerda — lista (com ctx), ícones e, em Gráficos, barras de contexto por sessão; clicar abre o detalhe com Visualizar, Tela ao vivo e Assumir.
+
+## 3.17.7 — 2026-11-10
+
+Sessão dentro do painel clássico (Nei: "quando abri a sessão veio o painel do Jarvis mas eu estava no clássico; ter a visão dos dados, ver o conteúdo do terminal e editar o terminal").
+
+- Clássico › Terminais: clicar na sessão abre ali mesmo, com abas **Dados** (quem abriu, modelo, contexto, custo, processo, último pedido/resposta) · **Conteúdo** (conversa só leitura, 5 s) · **Terminal** (tela ao vivo 2 s + digitar, Enter/Esc/Ctrl+C/↑/↓). "← Lista" volta; "abrir no Jarvis" continua como opção.
+- O redesenho automático do detalhe (15 s) não apaga a sessão aberta nem o texto que está sendo digitado.
+- `~/projetos/cct.sh` ao lado do `cc.sh` (o `cct` do `.bashrc` usa ele).
+- Testado no navegador pela 3143 com login: abas, tela ao vivo e envio → o Claude respondeu.
+
+## 3.16.7 — 2026-11-10
+
+Assumir sessão pelo painel, EM TESTE (Nei: "clicar nele para ver detalhe ou assumir ou visualizar"; "quero testar, depois podemos aumentar a segurança").
+
+- `cct <projeto>` (no `~/.bashrc` e em `wifi/statusline/cc-tmux.sh`): o `cc` dentro de um tmux próprio (`-L inema`, sem barra, mouse ligado). Só essas sessões podem ser vistas ao vivo e assumidas; as abertas com `cc` ficam só com "Visualizar conversa".
+- `GET /api/painel/terminal/tela?id=` (tmux capture-pane, segredos mascarados) e `POST /api/painel/terminal/enviar {id, texto | tecla}` (tmux send-keys literal + Enter; teclas permitidas: Enter, Escape, C-c, Up, Down, Tab, BTab).
+- Liga só com `PAINEL_ASSUMIR=1` no `.env`. Na 3143: sessão de login + CSRF (`X-Painel` + Origin); na 3142: Bearer. Cada envio em `~/.local/share/inema/painel-assumir.log` (quem, sessão, tecla, nº de caracteres e só o início do texto).
+- Jarvis: detalhe da sessão com 👁 Visualizar conversa · 🖥 Ver tela ao vivo (2 s) · ⌨ Assumir (confirma uma vez; Enter envia, Shift+Enter quebra linha; botões Esc, Ctrl+C, ↑, ↓, Enter). Clássico: cartão mostra quem abriu/modelo/contexto/tmux; detalhe sempre em tabela com link para ver ou assumir.
+- Teste de ponta a ponta: sessão real no tmux, login na 3143, envio pelo painel → o Claude respondeu; envio sem X-Painel → 403.
+- Segurança a reforçar depois (pedido do Nei): Cloudflare Access no ccc.inema.pro, Assumir só na LAN/Tailscale, ou senha extra.
+- 3 testes novos (`src/painel/assumir.test.ts`).
+
+## 3.15.7 — 2026-11-10
+
+Terminais com tudo da sessão (Nei: "nos terminais temos que ter mais informações e se clicar abrir todas… leitura apenas ou interação"; "definir se a sessão é física ou por agente e quem está disparando/controlando").
+
+- A statusline grava um retrato por sessão em `~/.local/share/inema/terminais/estado/<id>.json` (modelo, esforço, modo rápido, contexto %, tokens, custo equivalente, tempos, linhas +/−, projeto ativo, versão). Sem token nem credencial.
+- `src/painel/fontes/sessoes.ts`: junta retrato + processo (`ps`: CPU, memória, tempo) + transcript (última atividade, último pedido/resposta, modelo, `entrypoint` cli × sdk-cli) + **origem**: física (você no terminal pts/N, ou SSH) × agente (timer/serviço do systemd pelo cgroup, bot v3, inemaccbot, vigia continua, outra sessão do Claude, Codex, script), com a cadeia de processos pais.
+- `GET /api/painel/terminal?id=&n=`: conversa da sessão **só leitura** (você/claude/ferramenta/resultado, sem pensamento nem sub-agentes, segredos mascarados). Só sessões registradas.
+- Jarvis: Terminais mostra "N suas · M de agentes"; o detalhe lista as sessões (👤/🤖) e cada uma abre tudo, com "Ver conversa (só leitura)" atualizando a cada 5 s. `/jarvis#term:<id>` abre direto. Painel clássico: tabela com quem abriu, modelo, contexto, custo, último pedido e "ver tudo".
+- Interação (digitar na sessão pelo painel): não ligada — decisão de segurança pendente.
+- 6 testes novos (`src/painel/sessoes.test.ts`).
+
+## 3.14.7 — 2026-11-10
+
+Versão JARVIS do painel (Nei: "quero o painel do jarvis como mais uma versão… crie a versão jarvis no painel").
+
+- Rota nova `GET /jarvis` (na 3142 e na 3143 com o mesmo login): visual HUD do kit `jarvis-painel` (núcleo com anéis, partida "bom dia", voz pt-BR, barra Bom dia/Status/O que espera/Modo foco, teclas 1–4) lendo o mesmo `/api/painel`.
+- Esquerda: os 8 sistemas com uma frase de cada grupo, próximos timers (sem os de 5 min) e últimos publicados. Direita: alertas + "esperando você"; Visto/Depois só marcam no navegador. Núcleo fica vermelho quando há erro; alerta novo vira fala.
+- Botão "Versão Jarvis" no painel clássico e "Painel clássico" no Jarvis. A tela não escreve nada (sem `/api/vagas`).
+- Chave **Lista · Ícones · Gráficos** (tecla 5 alterna): ícones com o número principal de cada sistema; gráficos com medidores de memória/disco/carga/limites, barras de publicação por canal, blocos de vagas, linha do tempo das próximas 12 h e bolinhas dos sites.
+- Clique em qualquer item (linha, ícone, gráfico, timer, publicado ou "esperando você") abre um quadro com a explicação do sistema em português simples, todos os números e os alertas dele; botão Falar lê o resumo.
+- Voz mais rápida: 1,3× por padrão, botão "Velocidade" troca 1,0/1,3/1,6/2,0× (guardado no navegador).
+- `src/painel/tela/jarvis.ts` + 3 testes (`src/painel/jarvis.test.ts`).
+
+## 3.13.7 — 2026-11-09
+
+Painel pela rede local e pronto para o túnel (Nei: "quero o painel acessando pelo 192.168 e pelo ccc.inema.pro com uma senha ou autenticado pelo Google"; "salve ela no PC para não ficar toda hora autenticando").
+
+- Servidor do painel em porta PRÓPRIA (`PAINEL_PORT`, 3143; `0` desliga), `src/painel/servidor-painel.ts`. Só existem `/login`, `/logout`, `/` e `/painel`, `/api/painel*`, `POST /api/vagas`; qualquer outra rota (inclusive `/mensagem`, `/api/fila`, `/health`) → 404. A 3142 não mudou e continua no loopback.
+- `PAINEL_BIND` (padrão `127.0.0.1`): fora do loopback só sobe com senha definida; sem senha, loga e fica em 127.0.0.1.
+- Senha: só o hash scrypt em `~/.config/inema/painel-senha.json` (600), conferência em tempo constante. `npm run painel-senha` (sem eco) ou `-- --gerar` (senha forte escrita UMA vez em `painel-senha-inicial.txt`, 600; nada impresso).
+- Sessão: cookie HttpOnly, SameSite=Lax, `Secure` quando o túnel manda `X-Forwarded-Proto: https`; 365 dias deslizantes (cada uso estende, cookie regravado no máximo 1×/dia); só o SHA-256 do token em `store/painel-sessoes.json` (600), sobrevive a reinício; trocar a senha derruba todas. "Sair deste aparelho" e "Sair de todos (N aparelhos)" no topo.
+- Login compatível com o gerenciador de senhas (usuário fixo "painel" oculto + `current-password`). 5 erros por IP em 15 min → 15 min bloqueado (`CF-Connecting-IP`/`X-Forwarded-For` só valem vindo de 127.0.0.1).
+- `POST /api/vagas` na 3143: a sessão autentica (sem Bearer), com CSRF (cabeçalho `X-Painel: 1` + Origin do próprio host). Na 3142 a regra do token segue igual.
+- Google via Cloudflare Access (desligado sem `PAINEL_CF_ACCESS_AUD` + `PAINEL_CF_ACCESS_TEAM`): JWT `Cf-Access-Jwt-Assertion` conferido (RS256 contra as chaves do time, cache 1 h; `aud`, `iss`, `exp`, `nbf`; e-mail em `PAINEL_EMAILS`).
+- Cabeçalhos: CSP (inline + Google Fonts + miniaturas do YouTube), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: same-origin`, `no-store`.
+- 19 testes novos (`src/painel/auth.test.ts`): login, bloqueio, 404 fora da lista, bind (inclusive `ligarServidorPainel` com listen real), JWT válido/expirado/aud/e-mail/assinatura, freio de 5 min quando as chaves do Access não carregam, cookie malformado, CSRF, renovação deslizante e persistência após recriar o servidor, sair de todos.
+
+## 3.13.6 — 2026-11-09
+
+Painel de monitoramento para TV e celular (pedido do Nei: "uma tela com alertas e uma interface de monitoramento… desde que não consuma máquina e tokens").
+
+- `src/painel/`: `GET /painel` (também em `/`; o antigo foi para `/dashboard`), `GET /api/painel` (9 grupos, cada um com `ok`, `gerado_em`, `dados`/`erro`, `ausentes`), `/api/painel/<grupo>`, `/api/painel/falha?bot=&id=` (resultado completo, aberto no clique).
+- Fontes só locais e com cache: `/proc`, `statfs`, `journalctl` (boots 10 min, erro de memória da GPU 5 min), banco do v3 por faixa de id, `inemaccbot.db` só leitura (`readonly`, `fileMustExist`, timeout 300 ms), `rodadas.jsonl`, `continua/estado.json`, timers, histórico do yt-pubx (fim do arquivo), filas espanhol/cidades/r7ex, limites do Claude (statusline) e do Codex (fim do registro mais novo), `fila-vaga --status --json`, `terminais --json`, topo do `pendencias.md`. Nenhum modelo, nenhuma API.
+- Alertas numa lista única (`alertas.ts`) com chave estável; erros antigos de fila/continua não acendem a TV (janelas de 24/48 h).
+- `POST /api/vagas {classe, valor}`: única escrita; exige `DASHBOARD_TOKEN_V3` + Bearer (sem token = 403, `?token=` não vale), inteiro ≥ 1 e ≤ teto, grava pelo comando `vagas` (`execFile`). Aviso para gpu > 1.
+- Sites (`~/.config/inema/painel-sites.json`): GET a cada 5 min só enquanto o painel está aberto; `PAINEL_SITES=0` desliga.
+- Alerta no Telegram pronto e desligado (`PAINEL_ALERTA_TELEGRAM=1`), sem repetir chave (`store/painel-avisados.json`).
+- `src/cli/painel-teste.ts`: sobe só o HTTP do painel numa porta de teste, sem bot nem polling.
+- 20 testes novos (`src/painel/painel.test.ts`, `src/painel/tela.test.ts`: desenhos do cliente nos 3 modos com dados reais, rota de falha).
+
+## 3.12.6 — 2026-11-05
+
+Retomada sem reler a conversa inteira. Antes o bot retomava a sessão do chat por até 6 h; depois de 1 h o cache já tinha vencido e cada retomada relia tudo (job #89966: 154 mil tokens).
+
+- `src/orquestrador/resumo-sessao.ts` + cron `resumo-sessoes` (1/min): sessão parada há 40–52 min ganha um resumo de retomada escrito por uma cópia dela (`--fork-session`, cache quente, sem Bash/Edit/Write). Tentativa marcada antes de rodar: falha não repete a cada minuto; chat com job aberto é pulado.
+- `Sessoes.obter`: retoma só até 55 min (era 6 h). Depois disso, sessão nova com `[Retomada …]` = resumo + 6 últimas mensagens do chat (até 24 h; `/novo` zera).
+- Migração 11: `sessions.resumo`, `resumo_de`, `resumo_em`.
+
+## 3.11.6 — 2026-11-05
+
+Pedido barrado por hook não morre mais calado (job #89966, tornados PR/SC: o aviso de "cache venceu" do hook-longrun saiu como resposta e o job ficou `done` sem fazer nada).
+
+- `claude -p` do bot roda com `LONGRUN_PAUSA_TOKENS=0`: o bloqueio de pausa do hook-longrun é para o terminal, não para o bot.
+- `comRepeticaoSemBloqueio` (agente-cli.ts): se um hook barrar a sessão retomada, repete UMA vez em sessão nova (sem `--resume`); se barrar de novo, o job falha com o motivo em vez de entregar o texto do hook.
+
+## 3.11.5 — 2026-10-23
+
+O bot passa a receber arquivos. Antes só lia texto/legenda: um vídeo mandado no chat sumia sem aviso (22/10).
+
+- `src/canais/anexo.ts`: vídeo, foto (a maior), documento, áudio, voz, vídeo redondo e GIF são baixados para `store/anexos/<data>/<msg>-<nome>` nos chats em que o bot responde; o texto que vai ao agente ganha `[anexo recebido: vídeo · 12,3 MB · salvo em <caminho>]`.
+- Acima de 20 MB (limite do Bot API do Telegram) não baixa: a linha diz `NÃO baixado` e o motivo, para o agente avisar em vez de ignorar.
+- Mensagem só com arquivo (sem legenda) agora chega ao agente. Grupos só observados continuam sem download.
+
+## 3.10.5 — 2026-10-18
+
+Agente de projeto escolhido sem depender do roteador.
+
+- `gatilhos:` no `agent.yaml`: uma palavra da lista na mensagem manda direto para aquele agente (antes das heurísticas e do LLM).
+- `@<id>` no começo da mensagem escolhe o agente na hora (`@mostratec ...`, `@ops ...`).
+- Novo agente `mostratec` (cwd `~/projetos/mostratec`, modelo topo): trocar ideias e desenvolver o projeto INEMA na MOSTRATEC pelo Telegram.
+
+## 3.9.5 — 2026-10-14
+
+Incidente de 13/10: dois reels r7e pedidos pelo Telegram (#57172 às 00:57 e #58262 às 16:35) morreram como
+"lease vencido sem ack". O agente, a montagem (`reel7etapas.py montar`, pico de 1,49 GB num só processo) e o
+ffmpeg rodavam DENTRO do cgroup do serviço (MemoryHigh 1,5G / MemoryMax 2G): o serviço entrou em thrashing
+(pressão 96%, swap 2,8 G) e o systemd-oomd matou o bot inteiro, junto com a aventuras-fila, terminais e o Firefox.
+
+- Cada agente roda num escopo systemd próprio (`systemd-run --user --scope`, `MemoryMax=16G`, sem swap). O teto do
+  serviço volta a valer só para o bot. Estourou → morre só aquele job, com o erro "provável falta de memória".
+- `AGENTE_MEMORIA_MAX` muda o teto (`off` = comportamento antigo). `--scope` faz exec no mesmo PID: cancelar,
+  timeout e vigia continuam matando a árvore toda (testado).
+
+## 3.8.5 — 2026-10-11
+
+Incidente da madrugada de 11/10: três pedidos seguidos morreram no timeout de 20 min retomando a mesma sessão
+gigante (~286k tokens), e o `/status` não mostrava o pedido (enterrado pelo cron `lembretes`).
+
+- `/novo` em ordem, sem cancelar: grava o momento (`prefs.sessao_novo_em`). Job criado antes segue na conversa
+  velha e não grava por cima; job criado depois começa conversa nova. Antes, o job em voo regravava a sessão velha.
+- `/job <id> <texto>`: continuação de um job de agente na conversa DAQUELE job (coluna `jobs.sessao`, migração 10),
+  na vez dele (lane agente é 1 por vez). Só job do próprio chat.
+- `/status` mostra primeiro os seus jobs abertos (pedido + tempo); recentes sem cron e com o pedido. `/status <id>`
+  mostra o pedido e se há conversa salva.
+- Teto por tipo de pedido: produção (vídeo, 9:16, publicar, render, curso…) 3 h; o resto 20 min. Zumbi do
+  heartbeat passa a ser 2× o maior teto (6 h).
+- Vigia de sessão retomada: se o transcript não for escrito em 10 min, mata com "não respondeu" (não espera as
+  3 h). Job morto por timeout ou vigia descarta a sessão do chat: a mensagem seguinte começa limpa.
+- Heartbeat (30 min) avisa no chat "⏳ #id ainda rodando há N min" para job de agente com mais de 25 min.
+
+## 3.7.5 — 2026-10-10
+
+- Roteador (direto × agente) passa do `llama3.2` para o `qwen3.8:27b` (mesmo modelo do `geral`, já residente; sem
+  RAM extra). Com o prompt real do roteador e 14 frases típicas: llama3.2 7/14 (mandava "lê meus emails",
+  "o render terminou?", "espaço no disco" para a rota sem ferramentas), qwen 14/14, ~3 s/msg contra 0,7 s.
+- Roteador usa o keep_alive do papel (30m, igual ao geral) e o probe de 60 s não pinga o roteador quando ele é
+  o modelo geral: o ping renovaria o keep_alive e o qwen nunca sairia da GPU (decisão de 2026-09-28, renders).
+
+## 3.6.5 — 2026-10-10
+
+- Especialistas só-leitura (`consulta:*`) também recebem o quadro do chat. No teste ao vivo o `research` recebeu
+  só "ah, conta também os da pasta raiz" e respondeu "me perdi no contexto".
+- Teste ao vivo (chat http `teste-triagem`): outro assunto esperou o #53772 e foi respondido depois; complemento
+  com especialistas guardado (#53778) e executado DEPOIS do pedido (#53779 → #53780, mesma sessão do lead);
+  "qual situação?" respondido por código.
+
+## 3.6.4 — 2026-10-10
+
+- Quadro do chat (`src/orquestrador/quadro.ts`): assunto ativo, o que roda, a fila e a última entrega, lidos da
+  fila na hora de cada chamada (nunca guardado). Entra no prompt do roteador, da rota direta (qwen) e do agente
+  (`claude -p`, e no Codex quando virar motor, via `montarPrompt`); o agente se vê como "você está executando #N".
+- Prefixo de quem respondeu: `🏠` rota local, `🧠 #N agente` entrega do agente, `📋` situação por código.
+- Triagem com agente trabalhando no chat (`src/orquestrador/triagem.ts`), sem interromper o agente:
+  "para/cancela" cancela; mesmo assunto vira complemento no MESMO agente e sessão, rodando logo depois do atual;
+  outro assunto espera a vez (tarefa `apos-agente`) e só então é roteado. Com especialistas consultando, o
+  complemento também espera, para não rodar antes do pedido original.
+- Classificador da triagem = qwen (`geral`, residente): 6/6 em frases reais; o llama3.2 marcou "outro assunto"
+  em tudo (3/6). `steer` passa a valer só com resposta rápida em voo; com agente aberto vale a triagem.
+- Verificação: 221 testes.
+
+## 3.5.4 — 2026-10-09
+
+- Status por código: pergunta de andamento ("qual situação?", "terminou?") com job aberto no chat é respondida
+  lendo a fila (número, agente, há quanto tempo, pedido), sem modelo (`src/orquestrador/situacao.ts`).
+- Na dúvida → agente: consulta/estado/projeto/vídeo/publicação vão ao `lead` antes do LLM roteador; fallback
+  do roteador (sem JSON ou indisponível) passa a ser o agente, não a rota local.
+- Trava da rota direta: o qwen recebe a regra "sem ferramentas, nunca prometa; responda [ESCALAR]"; resposta com
+  promessa ("vou verificar…", "um momento") ou [ESCALAR] não é enviada e vira job do agente.
+- Caso real: 18:41/18:53 de 09/10, "vou verificar a situação…" sem job. Verificação: 216 testes.
+
+## 3.4.4 — 2026-09-25
+
+- Histórico das comparações Jev na tabela `jev_comparacoes` (migration 9), sem o texto da mensagem.
+  Antes só a última comparação por chat ficava guardada.
+- `/jev historico [n]` e `/jev relatorio dia|semana` (também `npm run jev -- historico|relatorio dia`).
+- Crons `jev-relatorio-diario` (8h05) e `jev-relatorio-semanal` (segunda 8h10) entregam o relatório no chat principal;
+  `/cron off <nome>` desliga.
+- Plano do jev-gw anotado em `docs/PLANO-JEV-GW.md` (não implementado).
+- Verificação: 203 testes.
+
+## 3.3.4 — 2026-09-19
+
+- Adiciona Jev via OpenRouter Decisions para observar rota, agente e skill sem alterar o dispatcher.
+- Passa as consultas pelo gateway, orçamento e registro de custo, com timeout, limite de frequência e isolamento por chat.
+- Acrescenta /jev observar|off, consulta da última comparação e CLI local de operação/teste.
+- Verificação: 202 testes e uma chamada real registrada pelo gateway.
+
+## 3.2.4 — 2026-09-17
+
+- Corrige o argumento de conta do Calendar e preserva tokens existentes no auth.
+- OAuth sugere a conta correta e solicita consentimento para acesso offline.
+- Skills Gmail/Calendar alinhadas aos conectores locais; seis autorizações validadas
+  com leitura e escrita temporária, sem envio de e-mail. Segredos fora do repositório.
+
+## 3.2.3 — 2026-09-14
+
+- Documentação da fase 9: seção 9b do README (interruptores, modos de fila com os limites frente ao
+  openclaw, camadas de persona, `/context`, `doctor --deep`, `mcp_config`); `/ajuda` ganhou bloco
+  "Controle da conversa" e `/ajuda <comando>` com o detalhe de cada um.
+
+## 3.2.2 — 2026-09-14
+
+- **`interrupt` não pegava agente em voo**: o teste `emCurso` só cobre resposta direta; no caso
+  comum (agente rodando na fila, resposta direta já encerrada) o `claude -p` seguia. Agora o
+  interrupt avança a geração e cancela por `flow_ref` antes de qualquer checagem, `responder()`
+  descarta também antes de despachar agente, e o `finally` só limpa `emCurso` se a geração ainda
+  for a vigente. Achado em revisão, não em produção.
+
+## 3.2.1 — 2026-09-14 (fase 9: "Jarvis obedece")
+
+Seis itens de `docs/INCORPORAR-V3.md`, um commit cada. Tudo em `prefs` (migration 8), sem tocar
+o que já existia.
+
+- **Interruptores** `/parar [tudo|agentes|<agente>] [motivo]` e `/retomar`: persistem, cancelam o
+  que está em voo nas lanes de conversa e o runner recusa job enfileirado antes do `/parar`.
+  Manutenção na lane `ollama` segue livre. Processo em execução morre na batida seguinte (até 30 s).
+- **Modos de fila por chat** `/fila collect|followup|steer|interrupt` (openclaw). `steer` substitui o
+  que estava na fila do chat com prioridade alta, sem injetar no agente em voo; `interrupt` cancela
+  fila e agentes do chat por `flow_ref` e descarta a resposta direta em voo (contador de geração).
+  Processo `claude -p` cancelado morre na batida seguinte do worker (até 30 s).
+- **SOUL** (Hermes): `agents/<id>/SOUL.md` fixo por agente e `/personality <nome|off>` por chat
+  lendo `personalidades/*.md`, somados a `IDENTIDADE.md`. Trocar limpa as sessões retomadas.
+- **`/context [detail] [texto]`**: tokens por camada do prompt (direto e agente), retrieval em modo
+  somente leitura para não inflar saliência.
+- **`npm run doctor -- --deep`**: probes que exercitam o sistema: `/health`, `sendMessage` no
+  Telegram, Ollama pelo gateway em banco de memória, job `doctor-probe` que o worker precisa concluir.
+- **`mcp_config` por agente** no `agent.yaml`: `--mcp-config <json> --strict-mcp-config`, o
+  especialista vê só os servidores dele. Sem a chave, herda os do usuário como antes.
+
+Testes: 187 passando (`npm test`).
+
+Fora desta fase, anotado como fase 10 em `docs/INCORPORAR-V3.md`: cliente MCP nativo no caminho
+Ollama e servidor MCP do inemavox como primeiro caso real.
+
+## 3.1.1 — 2026-09-07
+
+Correções encontradas em revisão, antes de qualquer conta ser ligada.
+
+- **Agenda voltaria a ficar cega** depois da primeira passagem: o marcador guardava o `start` do
+  evento mais distante da janela de 14 dias, então um compromisso criado depois — com data menor —
+  nunca passava do filtro `id > ultimo_id`. A agenda é uma janela, não um fluxo: agora cada passagem
+  usa o instante da leitura como id e o dedupe por hash do cérebro absorve o reprocesso.
+  Coberto por `src/cerebro/google.test.ts` (o arquivo não tinha teste nenhum).
+- **Descoberta de chat_id passou a funcionar como o doc promete**: um chat fora das duas listas era
+  descartado sem deixar rastro, e o `journalctl | grep telegram` do §3.3 não mostrava nada. Agora
+  aparece uma linha, uma vez por id.
+- **`/fontes ingerir gmail|agenda`**: o doc mandava "enfileirar pelo dashboard", que é read-only.
+- **`gcal.py`**: aliases de conta pessoal saíram do docstring (o repo é público).
+
+Testes: 175.
+
+## 3.1.0 — 2026-09-07
+
+Conectores e ingestão: as fontes externas passam a virar **memória**, não só resposta.
+
+- **Conectores Google versionados** em `conectores/google/`: `gmail.py` (novo, multi-conta) e
+  `gcal.py` (portado do v2, agora sem e-mail hardcoded). Uma credencial OAuth serve N contas;
+  cada conta tem seu token em `~/.config/google/`. `--conta` aceita alias, lista ou `todas`.
+  Uma conta com token quebrado não derruba as outras.
+- **Telegram multi-chat com modo observador**: `TELEGRAM_CHATS_RESPONDER` e
+  `TELEGRAM_CHATS_OBSERVAR`. Chat observado grava no cérebro e **nunca** responde; o adaptador
+  passou a ler também legenda de foto/vídeo e a guardar autor e nome do grupo.
+- **Ingestão** (`src/cerebro/ingestao.ts`): converte texto bruto em fatos duráveis em LOTE, uma
+  chamada no Ollama residente por bloco (custo zero). `ingestao_estado` (migration 7) marca até
+  onde cada fonte foi lida — rodar duas vezes não reprocessa. Erro de chamada não avança o
+  marcador; resposta ilegível avança, para um bloco ruim não travar a fonte para sempre.
+- **Crons**: `ingestao-observados` (30 min, ligado), `gmail-ingestao` (2 h) e `agenda-ingestao`
+  (7h05) criados **desligados** — ligar com `/cron on` depois de autenticar as contas.
+- **`/fontes`** mostra chats observados e o que já virou memória; `/fontes ingerir` roda na hora.
+- **`doctor`** checa `contas.json` e o token de cada conta por serviço.
+- **[docs/CONECTORES.md](docs/CONECTORES.md)**: passo a passo de vários e-mails, várias agendas e
+  Telegram no cérebro, com os limites reais da Bot API e o que exigiria uma sessão de usuário.
+
+Verificado no ar: 5 mensagens de um grupo observado → 4 fatos gravados, custo US$ 0, 3,6 s.
+Testes: 172.
+
+## 3.0.0 — 2026-09-06
+
+Primeira versão no ar, ao lado do v2 (v2 intocado, continua em produção).
+
+- **Fase 0 (esqueleto)**: `src/` por camadas, bus tipado, config em YAML com defaults, logger pino, vitest, unit systemd `--user` com `Restart=on-failure`, `MemoryHigh=1.5G`, `MemoryMax=2G` (cgroup verificado) e `--max-old-space-size=1024`.
+- **Fase 1 (fila + Ollama)**: `fila/` portada do inemaccbot com os 107 testes originais (claim atômico, lease + heartbeat, backoff, idempotência, drain); lanes `chat|agente|ollama|cron|io`; gestor do Ollama novo: registry de papéis, preflight de RAM, política de 1 modelo grande residente, nunca descarrega modelo alheio, probe a cada 60 s; `/status`, `/ollama`.
+- **Fase 2 (custo + telemetria)**: `chamadas_llm`, gateway único de LLM com tiers local→barato→premium, custo real do OpenRouter, orçamento com aviso a 70 % e trava a 100 %, `/usage`, `/health`, `GET /health`, alertas com dedupe (Ollama fora, RAM baixa, lease morto, zumbi, 3 falhas, orçamento).
+- **Fase 3 (canal Telegram + orquestrador)**: adaptador grammy com guarda contra o token do v2 e chat permitido; canais CLI e HTTP; roteador em Ollama pequeno (JSON) com heurística; modo `collect` de 2 s; agente por `claude -p --output-format json` na lane `agente` (sessão retomada, custo real do CLI registrado); especialistas read-only em paralelo + lead; skills e agents do v2 copiados como estão.
+- **Fase 4 (cérebro)**: 291 memórias do v2 importadas por snapshot `VACUUM INTO`; regex PT-BR (TODO #1 do v2); embeddings bge-m3 em BLOB com cosseno; retrieval em 3 camadas com teto de tokens; consolidação noturna (duplicatas, contradições → `superseded`, insights); propostas para `MEMORY.md`/`USER.md` com aprovação por comando; rascunhos de skill em `skills/_rascunhos`.
+- **Fase 5 (tarefas + heartbeat + cron)**: cron como jobs com `idem_key` por ocorrência, sessão principal/isolada; heartbeat a cada 30 min com recuperação de lease e detecção de zumbi; `/tarefa`, lembretes, `/daily` às 8h.
+- **Fase 6 (canais extras)**: Slack via Web API com probe de OAuth (desligado até o corte); WhatsApp com guarda que recusa enquanto o v2 é dono da sessão (implementação real na fase 8, em daemon separado).
+- **Fase 7 (dashboard + doctor + backup)**: dashboard compacto em `/` (fila, custo por dia/agente/tier, memória, Ollama/RAM, heartbeat); `npm run doctor`; backup noturno `VACUUM INTO` + `age`/gzip com retenção 14.
+- **Fase 8 (corte)**: não iniciada, de propósito.
+
+Testes: 160 passando (`npm test`).
